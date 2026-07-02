@@ -1,294 +1,396 @@
 extends Control
 
-const GameStateScript = preload("res://scripts/GameState.gd")
-const RacingSystemScript = preload("res://scripts/RacingSystem.gd")
-const BreedingSystemScript = preload("res://scripts/BreedingSystem.gd")
-const SaveSystemScript = preload("res://scripts/SaveSystem.gd")
+const SAVE_PATH := "user://save_game.json"
+const BREED_COST := 150
+const FEED_COST := 50
+const COLORS := ["brown", "white", "black", "gray", "gold", "chestnut"]
+const PATTERNS := ["no pattern", "stripe", "spots", "star", "socks"]
 
-var stats_label: Label
-var horse_list: ItemList
-var detail_label: Label
-var horse_preview: ColorRect
-var message_label: Label
-var feed_button: Button
-var race_button: Button
-var breed_button: Button
-var buy_feed_button: Button
-var save_button: Button
-var load_button: Button
+@onready var stats_label: Label = $RootMargin/Root/StatsLabel
+@onready var horse_list: ItemList = $RootMargin/Root/Content/ListPanel/ListBox/HorseList
+@onready var detail_label: Label = $RootMargin/Root/Content/DetailPanel/DetailBox/DetailLabel
+@onready var message_label: Label = $RootMargin/Root/MessageLabel
+@onready var feed_button: Button = $RootMargin/Root/ButtonRow/FeedButton
+@onready var buy_feed_button: Button = $RootMargin/Root/ButtonRow/BuyFeedButton
+@onready var race_button: Button = $RootMargin/Root/ButtonRow/RaceButton
+@onready var breed_button: Button = $RootMargin/Root/ButtonRow/BreedButton
+@onready var save_button: Button = $RootMargin/Root/ButtonRow/SaveButton
+@onready var load_button: Button = $RootMargin/Root/ButtonRow/LoadButton
 
-var state = GameStateScript.new()
-var racing_system = RacingSystemScript.new()
-var breeding_system = BreedingSystemScript.new()
-var save_system = SaveSystemScript.new()
+var coins := 500
+var feed := 5
+var horses: Array = []
+var next_horse_id := 1
 var selected_horse_index := 0
+var rng := RandomNumberGenerator.new()
 
-# Main owns the UI. Game logic stays in smaller system classes so it can grow later.
 func _ready() -> void:
-	_build_ui()
-	_connect_buttons()
-	var loaded := save_system.load_game(state)
-	_refresh_all()
-	_show_message("Loaded saved ranch." if loaded else "Started a new ranch.")
+	rng.randomize()
+	connect_signals()
+	if FileAccess.file_exists(SAVE_PATH):
+		load_game_data()
+	else:
+		setup_default_data()
+		show_message("Started a new ranch.")
+	refresh_all()
 
-func _build_ui() -> void:
-	set_anchors_preset(Control.PRESET_FULL_RECT)
+func connect_signals() -> void:
+	print("Connecting Tiny Horse Ranch UI signals")
+	prepare_button(feed_button)
+	prepare_button(buy_feed_button)
+	prepare_button(race_button)
+	prepare_button(breed_button)
+	prepare_button(save_button)
+	prepare_button(load_button)
+	horse_list.item_selected.connect(Callable(self, "_on_horse_selected"))
+	feed_button.pressed.connect(Callable(self, "_on_feed_pressed"))
+	buy_feed_button.pressed.connect(Callable(self, "_on_buy_feed_pressed"))
+	race_button.pressed.connect(Callable(self, "_on_race_pressed"))
+	breed_button.pressed.connect(Callable(self, "_on_breed_pressed"))
+	save_button.pressed.connect(Callable(self, "_on_save_pressed"))
+	load_button.pressed.connect(Callable(self, "_on_load_pressed"))
+	print("Button signals connected")
 
-	var root_margin := MarginContainer.new()
-	root_margin.set_anchors_preset(Control.PRESET_FULL_RECT)
-	root_margin.add_theme_constant_override("margin_left", 18)
-	root_margin.add_theme_constant_override("margin_top", 18)
-	root_margin.add_theme_constant_override("margin_right", 18)
-	root_margin.add_theme_constant_override("margin_bottom", 18)
-	add_child(root_margin)
+func prepare_button(button: Button) -> void:
+	button.mouse_filter = Control.MOUSE_FILTER_STOP
+	button.action_mode = BaseButton.ACTION_MODE_BUTTON_PRESS
 
-	var root_vbox := VBoxContainer.new()
-	root_vbox.add_theme_constant_override("separation", 12)
-	root_margin.add_child(root_vbox)
+func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo:
+		match event.keycode:
+			KEY_F:
+				_on_feed_pressed()
+			KEY_B:
+				_on_buy_feed_pressed()
+			KEY_R:
+				_on_race_pressed()
+			KEY_G:
+				_on_breed_pressed()
+			KEY_S:
+				_on_save_pressed()
+			KEY_L:
+				_on_load_pressed()
+			_:
+				return
+		get_viewport().set_input_as_handled()
 
-	var title_label := Label.new()
-	title_label.text = "Tiny Horse Ranch"
-	title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title_label.add_theme_font_size_override("font_size", 34)
-	root_vbox.add_child(title_label)
+func setup_default_data() -> void:
+	coins = 500
+	feed = 5
+	horses.clear()
+	next_horse_id = 1
+	add_horse(make_horse("Brownie", "Common", "brown", "no pattern", 7, 5, 3))
+	add_horse(make_horse("Snow", "Common", "white", "no pattern", 4, 8, 4))
+	add_horse(make_horse("Shadow", "Uncommon", "black", "stripe", 8, 6, 5))
+	selected_horse_index = 0
 
-	stats_label = Label.new()
-	stats_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	stats_label.add_theme_font_size_override("font_size", 20)
-	root_vbox.add_child(stats_label)
+func make_horse(name: String, rarity: String, color: String, pattern: String, speed: int, stamina: int, luck: int) -> Dictionary:
+	var horse := {
+		"id": next_horse_id,
+		"name": name,
+		"level": 1,
+		"exp": 0,
+		"speed": speed,
+		"stamina": stamina,
+		"luck": luck,
+		"condition": 80,
+		"affection": 0,
+		"color": color,
+		"pattern": pattern,
+		"rarity": rarity
+	}
+	next_horse_id += 1
+	return horse
 
-	var content := HBoxContainer.new()
-	content.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	content.add_theme_constant_override("separation", 12)
-	root_vbox.add_child(content)
-
-	var list_panel := PanelContainer.new()
-	list_panel.custom_minimum_size = Vector2(330, 0)
-	content.add_child(list_panel)
-
-	var list_vbox := VBoxContainer.new()
-	list_vbox.add_theme_constant_override("separation", 8)
-	list_panel.add_child(list_vbox)
-
-	var list_title := Label.new()
-	list_title.text = "My Horses"
-	list_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	list_title.add_theme_font_size_override("font_size", 22)
-	list_vbox.add_child(list_title)
-
-	horse_list = ItemList.new()
-	horse_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	horse_list.allow_reselect = true
-	list_vbox.add_child(horse_list)
-
-	var detail_panel := PanelContainer.new()
-	detail_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	content.add_child(detail_panel)
-
-	var detail_vbox := VBoxContainer.new()
-	detail_vbox.add_theme_constant_override("separation", 10)
-	detail_panel.add_child(detail_vbox)
-
-	var detail_title := Label.new()
-	detail_title.text = "Selected Horse"
-	detail_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	detail_title.add_theme_font_size_override("font_size", 22)
-	detail_vbox.add_child(detail_title)
-
-	horse_preview = ColorRect.new()
-	horse_preview.custom_minimum_size = Vector2(0, 90)
-	detail_vbox.add_child(horse_preview)
-
-	detail_label = Label.new()
-	detail_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	detail_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
-	detail_label.add_theme_font_size_override("font_size", 18)
-	detail_vbox.add_child(detail_label)
-
-	var button_grid := GridContainer.new()
-	button_grid.columns = 6
-	button_grid.add_theme_constant_override("h_separation", 8)
-	button_grid.add_theme_constant_override("v_separation", 8)
-	root_vbox.add_child(button_grid)
-
-	feed_button = _make_button("Feed Horse", button_grid)
-	race_button = _make_button("Race", button_grid)
-	breed_button = _make_button("Breed", button_grid)
-	buy_feed_button = _make_button("Buy Feed", button_grid)
-	save_button = _make_button("Save Game", button_grid)
-	load_button = _make_button("Load Game", button_grid)
-
-	message_label = Label.new()
-	message_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	message_label.add_theme_font_size_override("font_size", 16)
-	root_vbox.add_child(message_label)
-
-func _make_button(text: String, parent: Node) -> Button:
-	var button := Button.new()
-	button.text = text
-	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	parent.add_child(button)
-	return button
-
-func _connect_buttons() -> void:
-	horse_list.item_selected.connect(_on_horse_selected)
-	feed_button.pressed.connect(_on_feed_pressed)
-	race_button.pressed.connect(_on_race_pressed)
-	breed_button.pressed.connect(_on_breed_pressed)
-	buy_feed_button.pressed.connect(_on_buy_feed_pressed)
-	save_button.pressed.connect(_on_save_pressed)
-	load_button.pressed.connect(_on_load_pressed)
+func add_horse(horse: Dictionary) -> void:
+	horses.append(horse)
+	next_horse_id = max(next_horse_id, int(horse.get("id", 0)) + 1)
 
 func _on_horse_selected(index: int) -> void:
+	print("Horse selected: ", index)
 	selected_horse_index = index
-	_refresh_detail()
+	refresh_detail()
+	show_message("Selected %s." % str(get_selected_horse().get("name", "horse")))
 
-# Button handlers validate resources, call the right system, then refresh the UI.
 func _on_feed_pressed() -> void:
-	var horse = _get_selected_horse()
-	if horse == null:
-		_show_message("Select a horse first.")
+	print("Feed button pressed")
+	var horse := get_selected_horse()
+	if horse.is_empty():
+		show_message("Select a horse first.")
+		print("Feed failed: no horse selected")
 		return
-	if state.feed <= 0:
-		_show_message("Not enough feed.")
+	if feed <= 0:
+		show_message("Not enough feed.")
+		print("Feed failed: not enough feed")
 		return
 
-	state.feed -= 1
-	horse.feed()
-	_show_message("%s enjoyed the feed. Condition +20, affection +1." % horse.name)
-	_refresh_all()
+	feed -= 1
+	horse["condition"] = min(100, int(horse["condition"]) + 20)
+	horse["affection"] = int(horse["affection"]) + 1
+	horses[selected_horse_index] = horse
+	show_message("Fed %s." % str(horse["name"]))
+	print("Fed %s. Feed is now %d." % [str(horse["name"]), feed])
+	update_ui()
 
 func _on_buy_feed_pressed() -> void:
-	if state.coins < 50:
-		_show_message("Not enough coins.")
+	print("Buy Feed button pressed")
+	if coins < FEED_COST:
+		show_message("Not enough coins.")
+		print("Buy Feed failed: not enough coins")
 		return
 
-	state.coins -= 50
-	state.feed += 1
-	_show_message("Bought 1 feed for 50 coins.")
-	_refresh_all()
+	coins -= FEED_COST
+	feed += 1
+	show_message("Bought 1 feed.")
+	print("Bought 1 feed. Coins: %d, Feed: %d." % [coins, feed])
+	update_ui()
 
 func _on_race_pressed() -> void:
-	var horse = _get_selected_horse()
-	if horse == null:
-		_show_message("Select a horse first.")
+	print("Race button pressed")
+	var horse := get_selected_horse()
+	if horse.is_empty():
+		show_message("Select a horse first.")
+		print("Race failed: no horse selected")
 		return
 
-	var result := racing_system.run_race(horse)
-	state.coins += int(result["coins"])
-	var place_text := "%d%s" % [int(result["place"]), _placement_suffix(int(result["place"]))]
-	var message := "%s finished %s! Score %d, +%d coins, +%d exp." % [
-		horse.name,
-		place_text,
-		int(result["score"]),
-		int(result["coins"]),
-		int(result["exp"])
-	]
-	if bool(result["leveled_up"]):
-		message += " Level up!"
+	var condition_bonus := int(float(horse["condition"]) / 10.0)
+	var score := int(horse["speed"]) * 2 + int(horse["stamina"]) + int(horse["luck"]) + rng.randi_range(0, 20) + condition_bonus
+	var place := get_race_place(score)
+	var reward := get_race_reward(place)
 
-	_show_message(message)
-	_refresh_all()
+	coins += int(reward["coins"])
+	horse["exp"] = int(horse["exp"]) + int(reward["exp"])
+	horse["condition"] = max(0, int(horse["condition"]) - 15)
+
+	var level_text := ""
+	if int(horse["exp"]) >= 100:
+		horse["level"] = int(horse["level"]) + 1
+		horse["exp"] = 0
+		var stat_index := rng.randi_range(0, 2)
+		if stat_index == 0:
+			horse["speed"] = int(horse["speed"]) + 1
+			level_text = " Level up: speed +1."
+		elif stat_index == 1:
+			horse["stamina"] = int(horse["stamina"]) + 1
+			level_text = " Level up: stamina +1."
+		else:
+			horse["luck"] = int(horse["luck"]) + 1
+			level_text = " Level up: luck +1."
+
+	horses[selected_horse_index] = horse
+	show_message("%s finished %s and earned %d coins.%s" % [
+		str(horse["name"]),
+		get_place_text(place),
+		int(reward["coins"]),
+		level_text
+	])
+	print("%s race score %d, place %s, earned %d coins." % [
+		str(horse["name"]),
+		score,
+		get_place_text(place),
+		int(reward["coins"])
+	])
+	update_ui()
 
 func _on_breed_pressed() -> void:
-	if state.horses.size() < 2:
-		_show_message("Need at least two horses to breed.")
+	print("Breed button pressed")
+	if horses.size() < 2:
+		show_message("Need at least two horses to breed.")
+		print("Breed failed: not enough horses")
 		return
-	if state.coins < breeding_system.BREED_COST:
-		_show_message("Not enough coins to breed.")
+	if coins < BREED_COST:
+		show_message("Not enough coins to breed.")
+		print("Breed failed: not enough coins")
 		return
 
-	state.coins -= breeding_system.BREED_COST
-	var parent_a = state.horses[0]
-	var parent_b = state.horses[1]
-	var new_id := state.create_next_horse_id()
-	var foal = breeding_system.create_foal(parent_a, parent_b, new_id, new_id)
-	state.add_horse(foal)
-	selected_horse_index = state.horses.size() - 1
-	_show_message("A new foal was born: %s [%s]!" % [foal.name, foal.rarity])
-	_refresh_all()
+	coins -= BREED_COST
+	var parent_a: Dictionary = horses[0]
+	var parent_b: Dictionary = horses[1]
+	var foal := make_foal(parent_a, parent_b)
+	add_horse(foal)
+	selected_horse_index = horses.size() - 1
+	show_message("A new foal was born: %s." % str(foal["name"]))
+	print("A new foal was born: %s. Coins: %d." % [str(foal["name"]), coins])
+	update_ui()
 
 func _on_save_pressed() -> void:
-	if save_system.save_game(state):
-		_show_message("Game saved.")
-	else:
-		_show_message("Save failed.")
+	print("Save button pressed")
+	save_game_data()
 
 func _on_load_pressed() -> void:
-	var loaded := save_system.load_game(state)
-	selected_horse_index = 0
-	_refresh_all()
-	_show_message("Game loaded." if loaded else "No save file found. Started default ranch.")
+	print("Load button pressed")
+	load_game_data()
+	update_ui()
 
-func _get_selected_horse():
-	return state.get_horse(selected_horse_index)
+func get_selected_horse() -> Dictionary:
+	if selected_horse_index < 0 or selected_horse_index >= horses.size():
+		return {}
+	return horses[selected_horse_index]
 
-func _refresh_all() -> void:
-	_refresh_stats()
-	_refresh_horse_list()
-	_refresh_detail()
+func make_foal(parent_a: Dictionary, parent_b: Dictionary) -> Dictionary:
+	var foal_id := next_horse_id
+	return {
+		"id": foal_id,
+		"name": "Foal%d" % foal_id,
+		"level": 1,
+		"exp": 0,
+		"speed": mixed_stat(int(parent_a["speed"]), int(parent_b["speed"])),
+		"stamina": mixed_stat(int(parent_a["stamina"]), int(parent_b["stamina"])),
+		"luck": mixed_stat(int(parent_a["luck"]), int(parent_b["luck"])),
+		"condition": 80,
+		"affection": 0,
+		"color": inherited_trait(str(parent_a["color"]), str(parent_b["color"]), COLORS, 0.15),
+		"pattern": inherited_trait(str(parent_a["pattern"]), str(parent_b["pattern"]), PATTERNS, 0.20),
+		"rarity": random_rarity()
+	}
 
-func _refresh_stats() -> void:
-	stats_label.text = "Coins: %d | Feed: %d" % [state.coins, state.feed]
+func mixed_stat(a: int, b: int) -> int:
+	var average := int(round(float(a + b) / 2.0))
+	return max(1, average + rng.randi_range(-2, 2))
 
-func _refresh_horse_list() -> void:
-	horse_list.clear()
-	for horse in state.horses:
-		horse_list.add_item(horse.get_display_name())
+func inherited_trait(a: String, b: String, options: Array, mutation_chance: float) -> String:
+	if rng.randf() < mutation_chance:
+		return str(options[rng.randi_range(0, options.size() - 1)])
+	return a if rng.randf() < 0.5 else b
 
-	if not state.horses.is_empty():
-		selected_horse_index = clampi(selected_horse_index, 0, state.horses.size() - 1)
-		horse_list.select(selected_horse_index)
+func random_rarity() -> String:
+	var roll := rng.randf()
+	if roll < 0.02:
+		return "Legendary"
+	if roll < 0.08:
+		return "Epic"
+	if roll < 0.20:
+		return "Rare"
+	if roll < 0.45:
+		return "Uncommon"
+	return "Common"
 
-func _refresh_detail() -> void:
-	var horse = _get_selected_horse()
-	if horse == null:
-		detail_label.text = "No horse selected."
-		horse_preview.color = Color(0.25, 0.25, 0.25)
+func get_race_place(score: int) -> int:
+	if score >= 40:
+		return 1
+	if score >= 32:
+		return 2
+	if score >= 24:
+		return 3
+	return 4
+
+func get_race_reward(place: int) -> Dictionary:
+	if place == 1:
+		return {"coins": 200, "exp": 30}
+	if place == 2:
+		return {"coins": 120, "exp": 20}
+	if place == 3:
+		return {"coins": 70, "exp": 10}
+	return {"coins": 30, "exp": 5}
+
+func get_place_text(place: int) -> String:
+	if place == 1:
+		return "1st"
+	if place == 2:
+		return "2nd"
+	if place == 3:
+		return "3rd"
+	return "with a participation prize"
+
+func save_game_data() -> void:
+	var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	if file == null:
+		show_message("Save failed.")
+		print("Save failed.")
 		return
 
-	horse_preview.color = _color_from_name(horse.color)
+	file.store_string(JSON.stringify({
+		"coins": coins,
+		"feed": feed,
+		"horses": horses,
+		"next_horse_id": next_horse_id
+	}, "\t"))
+	show_message("Game saved.")
+	print("Game saved to %s." % SAVE_PATH)
+
+func load_game_data() -> void:
+	if not FileAccess.file_exists(SAVE_PATH):
+		setup_default_data()
+		show_message("No save file found. Started default ranch.")
+		print("No save file found. Started default ranch.")
+		return
+
+	var file := FileAccess.open(SAVE_PATH, FileAccess.READ)
+	if file == null:
+		setup_default_data()
+		show_message("Load failed. Started default ranch.")
+		print("Load failed. Started default ranch.")
+		return
+
+	var parsed = JSON.parse_string(file.get_as_text())
+	if not (parsed is Dictionary):
+		setup_default_data()
+		show_message("Save file is invalid. Started default ranch.")
+		print("Save file is invalid. Started default ranch.")
+		return
+
+	coins = int(parsed.get("coins", 500))
+	feed = int(parsed.get("feed", 5))
+	next_horse_id = int(parsed.get("next_horse_id", 1))
+	var loaded_horses = parsed.get("horses", [])
+	if loaded_horses is Array:
+		horses = loaded_horses
+	else:
+		horses = []
+	if horses.is_empty():
+		setup_default_data()
+	selected_horse_index = 0
+	show_message("Game loaded.")
+	print("Game loaded from %s." % SAVE_PATH)
+
+func refresh_all() -> void:
+	update_ui()
+
+func update_ui() -> void:
+	refresh_stats()
+	refresh_horse_list()
+	refresh_detail()
+
+func refresh_stats() -> void:
+	stats_label.text = "Coins: %d | Feed: %d" % [coins, feed]
+
+func refresh_horse_list() -> void:
+	horse_list.clear()
+	for horse in horses:
+		horse_list.add_item("%s Lv.%d [%s]" % [
+			str(horse.get("name", "Horse")),
+			int(horse.get("level", 1)),
+			str(horse.get("rarity", "Common"))
+		])
+
+	if horses.is_empty():
+		selected_horse_index = -1
+		return
+
+	selected_horse_index = clampi(selected_horse_index, 0, horses.size() - 1)
+	horse_list.select(selected_horse_index)
+
+func refresh_detail() -> void:
+	var horse := get_selected_horse()
+	if horse.is_empty():
+		detail_label.text = "No horse selected."
+		return
+
 	var lines := PackedStringArray([
-		"Name: %s" % horse.name,
-		"ID: %d" % horse.id,
-		"Rarity: %s" % horse.rarity,
-		"Level: %d" % horse.level,
-		"EXP: %d / 100" % horse.exp,
-		"Speed: %d" % horse.speed,
-		"Stamina: %d" % horse.stamina,
-		"Luck: %d" % horse.luck,
-		"Condition: %d / 100" % horse.condition,
-		"Affection: %d" % horse.affection,
-		"Color: %s" % horse.color,
-		"Pattern: %s" % horse.pattern
+		"ID: %d" % int(horse["id"]),
+		"Name: %s" % str(horse["name"]),
+		"Rarity: %s" % str(horse["rarity"]),
+		"Level: %d" % int(horse["level"]),
+		"EXP: %d / 100" % int(horse["exp"]),
+		"Speed: %d" % int(horse["speed"]),
+		"Stamina: %d" % int(horse["stamina"]),
+		"Luck: %d" % int(horse["luck"]),
+		"Condition: %d / 100" % int(horse["condition"]),
+		"Affection: %d" % int(horse["affection"]),
+		"Color: %s" % str(horse["color"]),
+		"Pattern: %s" % str(horse["pattern"])
 	])
 	detail_label.text = "\n".join(lines)
 
-func _show_message(text: String) -> void:
+func show_message(text: String) -> void:
 	message_label.text = text
-
-func _placement_suffix(place: int) -> String:
-	if place == 1:
-		return "st"
-	if place == 2:
-		return "nd"
-	if place == 3:
-		return "rd"
-	return "th"
-
-func _color_from_name(color_name: String) -> Color:
-	match color_name:
-		"brown":
-			return Color(0.45, 0.25, 0.12)
-		"white":
-			return Color(0.92, 0.92, 0.86)
-		"black":
-			return Color(0.08, 0.08, 0.09)
-		"gray":
-			return Color(0.45, 0.47, 0.50)
-		"gold":
-			return Color(0.95, 0.67, 0.18)
-		"chestnut":
-			return Color(0.60, 0.24, 0.10)
-		_:
-			return Color(0.50, 0.35, 0.20)
