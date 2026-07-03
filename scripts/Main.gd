@@ -5,6 +5,7 @@ const BREED_COST := 150
 const FEED_COST := 50
 const COLORS := ["brown", "white", "black", "gray", "gold", "chestnut"]
 const PATTERNS := ["no pattern", "stripe", "spots", "star", "socks"]
+const RARITIES := ["Common", "Uncommon", "Rare", "Epic", "Legendary"]
 
 @onready var stats_label: Label = $RootMargin/Root/StatsLabel
 @onready var horse_list: ItemList = $RootMargin/Root/Content/ListPanel/ListBox/HorseList
@@ -16,8 +17,13 @@ const PATTERNS := ["no pattern", "stripe", "spots", "star", "socks"]
 @onready var breed_button: Button = $RootMargin/Root/ButtonRow/BreedButton
 @onready var save_button: Button = $RootMargin/Root/ButtonRow/SaveButton
 @onready var load_button: Button = $RootMargin/Root/ButtonRow/LoadButton
+@onready var collection_button: Button = $RootMargin/Root/ButtonRow/CollectionButton
 @onready var parent_a_option: OptionButton = $RootMargin/Root/BreedingPanel/BreedingBox/ParentAOption
 @onready var parent_b_option: OptionButton = $RootMargin/Root/BreedingPanel/BreedingBox/ParentBOption
+@onready var collection_panel: PanelContainer = $RootMargin/Root/CollectionPanel
+@onready var collection_summary_label: Label = $RootMargin/Root/CollectionPanel/CollectionBox/CollectionSummaryLabel
+@onready var collection_horse_list_label: Label = $RootMargin/Root/CollectionPanel/CollectionBox/CollectionScroll/CollectionHorseListLabel
+@onready var collection_close_button: Button = $RootMargin/Root/CollectionPanel/CollectionBox/CollectionCloseButton
 
 var coins := 500
 var feed := 5
@@ -47,6 +53,8 @@ func connect_signals() -> void:
 	prepare_button(breed_button)
 	prepare_button(save_button)
 	prepare_button(load_button)
+	prepare_button(collection_button)
+	prepare_button(collection_close_button)
 	horse_list.item_selected.connect(Callable(self, "_on_horse_selected"))
 	parent_a_option.item_selected.connect(Callable(self, "_on_parent_a_selected"))
 	parent_b_option.item_selected.connect(Callable(self, "_on_parent_b_selected"))
@@ -56,6 +64,8 @@ func connect_signals() -> void:
 	breed_button.pressed.connect(Callable(self, "_on_breed_pressed"))
 	save_button.pressed.connect(Callable(self, "_on_save_pressed"))
 	load_button.pressed.connect(Callable(self, "_on_load_pressed"))
+	collection_button.pressed.connect(Callable(self, "_on_collection_pressed"))
+	collection_close_button.pressed.connect(Callable(self, "_on_collection_close_pressed"))
 	print("Button signals connected")
 
 func prepare_button(button: Button) -> void:
@@ -77,6 +87,8 @@ func _input(event: InputEvent) -> void:
 				_on_save_pressed()
 			KEY_L:
 				_on_load_pressed()
+			KEY_C:
+				_on_collection_pressed()
 			_:
 				return
 		get_viewport().set_input_as_handled()
@@ -256,6 +268,17 @@ func _on_load_pressed() -> void:
 	load_game_data()
 	update_ui()
 
+func _on_collection_pressed() -> void:
+	print("Collection opened")
+	collection_panel.visible = true
+	update_collection_ui()
+	show_message("Collection opened.")
+
+func _on_collection_close_pressed() -> void:
+	print("Collection closed")
+	collection_panel.visible = false
+	show_message("Collection closed.")
+
 func get_selected_horse() -> Dictionary:
 	if selected_horse_index < 0 or selected_horse_index >= horses.size():
 		return {}
@@ -417,6 +440,8 @@ func update_ui() -> void:
 	refresh_horse_list()
 	refresh_parent_options()
 	refresh_detail()
+	if collection_panel.visible:
+		update_collection_ui()
 
 func refresh_stats() -> void:
 	stats_label.text = "Coins: %d | Feed: %d" % [coins, feed]
@@ -486,6 +511,83 @@ func fill_parent_option(option: OptionButton, selected_id: int) -> void:
 			option.select(index)
 			return
 	option.select(0)
+
+func update_collection_ui() -> void:
+	var rarity_counts := get_rarity_counts()
+	var discovered_colors := get_discovered_colors()
+	var discovered_patterns := get_discovered_patterns()
+	var summary_lines := PackedStringArray([
+		"Total horses: %d" % horses.size(),
+		"Colors: %s" % format_discovered_list(discovered_colors),
+		"Patterns: %s" % format_discovered_list(discovered_patterns),
+		"Rarity counts:"
+	])
+
+	for rarity in RARITIES:
+		summary_lines.append("%s: %d" % [rarity, int(rarity_counts.get(rarity, 0))])
+	collection_summary_label.text = "\n".join(summary_lines)
+
+	var horse_lines := PackedStringArray()
+	for horse in horses:
+		if not (horse is Dictionary):
+			continue
+		horse_lines.append("%s | %s | %s | %s" % [
+			str(horse.get("name", "Horse")),
+			str(horse.get("rarity", "Common")),
+			str(horse.get("color", "unknown")),
+			str(horse.get("pattern", "unknown"))
+		])
+
+	if horse_lines.is_empty():
+		collection_horse_list_label.text = "No horses."
+	else:
+		collection_horse_list_label.text = "\n".join(horse_lines)
+
+func get_rarity_counts() -> Dictionary:
+	var counts := {}
+	for rarity in RARITIES:
+		counts[rarity] = 0
+
+	for horse in horses:
+		if not (horse is Dictionary):
+			continue
+		var horse_rarity := str(horse.get("rarity", "Common"))
+		if not counts.has(horse_rarity):
+			counts[horse_rarity] = 0
+		counts[horse_rarity] = int(counts[horse_rarity]) + 1
+	return counts
+
+func get_discovered_colors() -> Array:
+	var discovered := {}
+	for horse in horses:
+		if horse is Dictionary:
+			discovered[str(horse.get("color", "unknown"))] = true
+
+	var colors := []
+	for color in discovered.keys():
+		colors.append(str(color))
+	colors.sort()
+	return colors
+
+func get_discovered_patterns() -> Array:
+	var discovered := {}
+	for horse in horses:
+		if horse is Dictionary:
+			discovered[str(horse.get("pattern", "unknown"))] = true
+
+	var patterns := []
+	for pattern in discovered.keys():
+		patterns.append(str(pattern))
+	patterns.sort()
+	return patterns
+
+func format_discovered_list(items: Array) -> String:
+	if items.is_empty():
+		return "None"
+	var text_items := PackedStringArray()
+	for item in items:
+		text_items.append(str(item))
+	return ", ".join(text_items)
 
 func refresh_detail() -> void:
 	var horse := get_selected_horse()

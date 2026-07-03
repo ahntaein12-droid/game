@@ -143,8 +143,49 @@ layout_mode = 2
 size_flags_horizontal = 3
 text = "Load Game"
 
+[node name="CollectionButton" type="Button" parent="RootMargin/Root/ButtonRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Collection"
+
 [node name="MessageLabel" type="Label" parent="RootMargin/Root"]
 layout_mode = 2
 text = "Welcome to Tiny Horse Ranch."
 autowrap_mode = 3
 theme_override_font_sizes/font_size = 16
+
+[node name="CollectionPanel" type="PanelContainer" parent="RootMargin/Root"]
+visible = false
+custom_minimum_size = Vector2(0, 240)
+layout_mode = 2
+
+[node name="CollectionBox" type="VBoxContainer" parent="RootMargin/Root/CollectionPanel"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="CollectionTitle" type="Label" parent="RootMargin/Root/CollectionPanel/CollectionBox"]
+layout_mode = 2
+text = "Horse Collection"
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 22
+
+[node name="CollectionSummaryLabel" type="Label" parent="RootMargin/Root/CollectionPanel/CollectionBox"]
+layout_mode = 2
+text = "No collection data."
+autowrap_mode = 3
+theme_override_font_sizes/font_size = 15
+
+[node name="CollectionScroll" type="ScrollContainer" parent="RootMargin/Root/CollectionPanel/CollectionBox"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="CollectionHorseListLabel" type="Label" parent="RootMargin/Root/CollectionPanel/CollectionBox/CollectionScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "No horses."
+autowrap_mode = 3
+theme_override_font_sizes/font_size = 15
+
+[node name="CollectionCloseButton" type="Button" parent="RootMargin/Root/CollectionPanel/CollectionBox"]
+layout_mode = 2
+text = "Close"
