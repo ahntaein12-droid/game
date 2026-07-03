@@ -3,8 +3,10 @@ extends Control
 const SAVE_PATH := "user://save_game.json"
 const BREED_COST := 150
 const FEED_COST := 50
-const COLORS := ["brown", "white", "black", "gray", "gold", "chestnut"]
-const PATTERNS := ["no pattern", "stripe", "spots", "star", "socks"]
+const BASIC_COLORS := ["brown", "white", "black", "gray", "cream"]
+const RARE_COLORS := ["silver", "gold", "blue", "pink", "aurora"]
+const BASIC_PATTERNS := ["no pattern", "stripe", "spot"]
+const RARE_PATTERNS := ["star", "cloud", "moon", "heart"]
 const RARITIES := ["Common", "Uncommon", "Rare", "Epic", "Legendary"]
 
 @onready var stats_label: Label = $RootMargin/Root/StatsLabel
@@ -20,6 +22,8 @@ const RARITIES := ["Common", "Uncommon", "Rare", "Epic", "Legendary"]
 @onready var collection_button: Button = $RootMargin/Root/ButtonRow/CollectionButton
 @onready var parent_a_option: OptionButton = $RootMargin/Root/BreedingPanel/BreedingBox/ParentAOption
 @onready var parent_b_option: OptionButton = $RootMargin/Root/BreedingPanel/BreedingBox/ParentBOption
+@onready var ranch_panel: PanelContainer = $RootMargin/Root/RanchPanel
+@onready var ranch_grid: GridContainer = $RootMargin/Root/RanchPanel/RanchBox/RanchScroll/RanchGrid
 @onready var collection_panel: PanelContainer = $RootMargin/Root/CollectionPanel
 @onready var collection_summary_label: Label = $RootMargin/Root/CollectionPanel/CollectionBox/CollectionSummaryLabel
 @onready var collection_horse_list_label: Label = $RootMargin/Root/CollectionPanel/CollectionBox/CollectionScroll/CollectionHorseListLabel
@@ -38,6 +42,7 @@ var rng := RandomNumberGenerator.new()
 func _ready() -> void:
 	rng.randomize()
 	connect_signals()
+	setup_ranch_view()
 	if FileAccess.file_exists(SAVE_PATH):
 		load_game_data()
 	else:
@@ -131,6 +136,7 @@ func _on_horse_selected(index: int) -> void:
 	print("Horse selected: ", index)
 	selected_horse_index = index
 	refresh_detail()
+	update_ranch_view()
 	show_message("Selected %s." % str(get_selected_horse().get("name", "horse")))
 
 func _on_parent_a_selected(index: int) -> void:
@@ -251,6 +257,7 @@ func _on_breed_pressed() -> void:
 		print("Breed failed: same parent selected")
 		return
 
+	print("Breeding %s + %s" % [str(parent_a.get("name", "Horse")), str(parent_b.get("name", "Horse"))])
 	coins -= BREED_COST
 	var foal := make_foal(parent_a, parent_b)
 	add_horse(foal)
@@ -306,48 +313,143 @@ func find_different_horse_id(horse_id: int) -> int:
 
 func make_foal(parent_a: Dictionary, parent_b: Dictionary) -> Dictionary:
 	var foal_id := next_horse_id
+	var foal_rarity := calculate_foal_rarity(parent_a, parent_b)
+	print("Foal rarity roll result: %s" % foal_rarity)
 	return {
 		"id": foal_id,
 		"name": "Foal%d" % foal_id,
 		"level": 1,
 		"exp": 0,
-		"speed": mixed_stat(int(parent_a["speed"]), int(parent_b["speed"])),
-		"stamina": mixed_stat(int(parent_a["stamina"]), int(parent_b["stamina"])),
-		"luck": mixed_stat(int(parent_a["luck"]), int(parent_b["luck"])),
+		"speed": calculate_inherited_stat(int(parent_a["speed"]), int(parent_b["speed"]), parent_a, parent_b),
+		"stamina": calculate_inherited_stat(int(parent_a["stamina"]), int(parent_b["stamina"]), parent_a, parent_b),
+		"luck": calculate_inherited_stat(int(parent_a["luck"]), int(parent_b["luck"]), parent_a, parent_b),
 		"condition": 80,
 		"affection": 0,
-		"color": inherited_trait(str(parent_a["color"]), str(parent_b["color"]), COLORS, 0.15),
-		"pattern": inherited_trait(str(parent_a["pattern"]), str(parent_b["pattern"]), PATTERNS, 0.20),
-		"rarity": random_rarity()
+		"color": calculate_foal_color(parent_a, parent_b),
+		"pattern": calculate_foal_pattern(parent_a, parent_b),
+		"rarity": foal_rarity
 	}
 
-func mixed_stat(a: int, b: int) -> int:
-	var average := int(round(float(a + b) / 2.0))
-	return max(1, average + rng.randi_range(-2, 2))
+func calculate_foal_rarity(parent_a: Dictionary, parent_b: Dictionary) -> String:
+	var rarity_a := str(parent_a.get("rarity", "Common"))
+	var rarity_b := str(parent_b.get("rarity", "Common"))
+	var score_a := get_rarity_score(rarity_a)
+	var score_b := get_rarity_score(rarity_b)
+	var low_score: int = min(score_a, score_b)
+	var high_score: int = max(score_a, score_b)
+	var weights := get_rarity_weight_table(low_score, high_score)
+	return roll_weighted_rarity(weights)
 
-func inherited_trait(a: String, b: String, options: Array, mutation_chance: float) -> String:
-	if rng.randf() < mutation_chance:
-		return str(options[rng.randi_range(0, options.size() - 1)])
-	return a if rng.randf() < 0.5 else b
+func get_rarity_weight_table(low_score: int, high_score: int) -> Dictionary:
+	if high_score >= 4:
+		if low_score >= 4:
+			return {"Epic": 55, "Legendary": 45}
+		if low_score >= 3:
+			return {"Rare": 20, "Epic": 50, "Legendary": 30}
+		return {"Rare": 48, "Epic": 34, "Legendary": 18}
 
-func random_rarity() -> String:
-	var roll := rng.randf()
-	if roll < 0.02:
-		return "Legendary"
-	if roll < 0.08:
-		return "Epic"
-	if roll < 0.20:
-		return "Rare"
-	if roll < 0.45:
-		return "Uncommon"
+	if low_score == 0 and high_score == 0:
+		return {"Common": 82, "Uncommon": 16, "Rare": 2}
+	if low_score == 0 and high_score == 1:
+		return {"Common": 40, "Uncommon": 50, "Rare": 10}
+	if low_score == 1 and high_score == 1:
+		return {"Common": 10, "Uncommon": 68, "Rare": 20, "Epic": 2}
+	if low_score == 2 and high_score == 2:
+		return {"Uncommon": 8, "Rare": 72, "Epic": 18, "Legendary": 2}
+	if low_score == 3 and high_score == 3:
+		return {"Rare": 8, "Epic": 78, "Legendary": 14}
+
+	var average_score := int(round(float(low_score + high_score) / 2.0))
+	match average_score:
+		0:
+			return {"Common": 70, "Uncommon": 25, "Rare": 5}
+		1:
+			return {"Common": 18, "Uncommon": 58, "Rare": 22, "Epic": 2}
+		2:
+			return {"Uncommon": 15, "Rare": 62, "Epic": 21, "Legendary": 2}
+		_:
+			return {"Rare": 18, "Epic": 68, "Legendary": 14}
+
+func roll_weighted_rarity(weights: Dictionary) -> String:
+	var total_weight := 0
+	for weighted_rarity in weights.keys():
+		total_weight += int(weights[weighted_rarity])
+
+	var roll := rng.randi_range(1, total_weight)
+	var running_total := 0
+	for rarity_name in RARITIES:
+		running_total += int(weights.get(rarity_name, 0))
+		if roll <= running_total:
+			return rarity_name
 	return "Common"
 
+func calculate_inherited_stat(a: int, b: int, parent_a: Dictionary, parent_b: Dictionary) -> int:
+	var average := int(round(float(a + b) / 2.0))
+	return max(1, average + rng.randi_range(-2, 2) + get_rarity_bonus(parent_a, parent_b))
+
+func calculate_foal_color(parent_a: Dictionary, parent_b: Dictionary) -> String:
+	var color_a := normalize_color(str(parent_a.get("color", "brown")))
+	var color_b := normalize_color(str(parent_b.get("color", "brown")))
+	var rare_chance := clampf(0.04 + float(max(get_rarity_score(str(parent_a.get("rarity", "Common"))), get_rarity_score(str(parent_b.get("rarity", "Common"))))) * 0.035, 0.04, 0.22)
+
+	if rng.randf() < rare_chance:
+		return str(RARE_COLORS[rng.randi_range(0, RARE_COLORS.size() - 1)])
+	if color_a != color_b and rng.randf() < 0.22:
+		return str(BASIC_COLORS[rng.randi_range(0, BASIC_COLORS.size() - 1)])
+	return color_a if rng.randf() < 0.5 else color_b
+
+func calculate_foal_pattern(parent_a: Dictionary, parent_b: Dictionary) -> String:
+	var pattern_a := normalize_pattern(str(parent_a.get("pattern", "no pattern")))
+	var pattern_b := normalize_pattern(str(parent_b.get("pattern", "no pattern")))
+	var rare_chance := clampf(0.03 + float(max(get_rarity_score(str(parent_a.get("rarity", "Common"))), get_rarity_score(str(parent_b.get("rarity", "Common"))))) * 0.03, 0.03, 0.18)
+
+	if rng.randf() < rare_chance:
+		return str(RARE_PATTERNS[rng.randi_range(0, RARE_PATTERNS.size() - 1)])
+	if pattern_a != pattern_b and rng.randf() < 0.18:
+		return str(BASIC_PATTERNS[rng.randi_range(0, BASIC_PATTERNS.size() - 1)])
+	return pattern_a if rng.randf() < 0.5 else pattern_b
+
+func get_rarity_score(rarity: String) -> int:
+	var score := RARITIES.find(rarity)
+	return max(score, 0)
+
+func get_rarity_bonus(parent_a: Dictionary, parent_b: Dictionary) -> int:
+	var best_score: int = max(
+		get_rarity_score(str(parent_a.get("rarity", "Common"))),
+		get_rarity_score(str(parent_b.get("rarity", "Common")))
+	)
+	match best_score:
+		0:
+			return 0
+		1:
+			return rng.randi_range(0, 1)
+		2:
+			return rng.randi_range(1, 2)
+		3:
+			return rng.randi_range(2, 3)
+		_:
+			return rng.randi_range(3, 4)
+
+func normalize_color(color: String) -> String:
+	if color == "chestnut":
+		return "brown"
+	if BASIC_COLORS.has(color) or RARE_COLORS.has(color):
+		return color
+	return "brown"
+
+func normalize_pattern(pattern: String) -> String:
+	if pattern == "spots" or pattern == "socks":
+		return "spot"
+	if BASIC_PATTERNS.has(pattern) or RARE_PATTERNS.has(pattern):
+		return pattern
+	return "no pattern"
+
 func get_foal_message(foal: Dictionary) -> String:
-	return "A new foal was born: %s | Color: %s | Pattern: %s | Rarity: %s | Speed: %d | Stamina: %d | Luck: %d" % [
+	return "A new foal was born!\nName: %s\nRarity: %s\nColor: %s\nPattern: %s\nSpeed: %d\nStamina: %d\nLuck: %d" % [
 		str(foal["name"]),
+		str(foal["rarity"]),
 		str(foal["color"]),
 		str(foal["pattern"]),
-		str(foal["rarity"]),
 		int(foal["speed"]),
 		int(foal["stamina"]),
 		int(foal["luck"])
@@ -440,6 +542,7 @@ func update_ui() -> void:
 	refresh_horse_list()
 	refresh_parent_options()
 	refresh_detail()
+	update_ranch_view()
 	if collection_panel.visible:
 		update_collection_ui()
 
@@ -461,6 +564,130 @@ func refresh_horse_list() -> void:
 
 	selected_horse_index = clampi(selected_horse_index, 0, horses.size() - 1)
 	horse_list.select(selected_horse_index)
+
+func setup_ranch_view() -> void:
+	var ranch_style := StyleBoxFlat.new()
+	ranch_style.bg_color = Color(0.28, 0.48, 0.22)
+	ranch_style.border_color = Color(0.16, 0.31, 0.13)
+	ranch_style.set_border_width_all(2)
+	ranch_style.corner_radius_top_left = 6
+	ranch_style.corner_radius_top_right = 6
+	ranch_style.corner_radius_bottom_left = 6
+	ranch_style.corner_radius_bottom_right = 6
+	ranch_panel.add_theme_stylebox_override("panel", ranch_style)
+	ranch_grid.add_theme_constant_override("h_separation", 8)
+	ranch_grid.add_theme_constant_override("v_separation", 8)
+
+func update_ranch_view() -> void:
+	for child in ranch_grid.get_children():
+		child.queue_free()
+
+	for index in range(horses.size()):
+		var horse = horses[index]
+		if horse is Dictionary:
+			ranch_grid.add_child(create_horse_card(horse, index))
+
+func create_horse_card(horse: Dictionary, index: int) -> Button:
+	var card := Button.new()
+	card.custom_minimum_size = Vector2(132, 86)
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.text = "%s\n%s" % [
+		str(horse.get("name", "Horse")),
+		str(horse.get("rarity", "Common"))
+	]
+	card.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	card.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	card.vertical_icon_alignment = VERTICAL_ALIGNMENT_CENTER
+	card.mouse_filter = Control.MOUSE_FILTER_STOP
+	card.action_mode = BaseButton.ACTION_MODE_BUTTON_PRESS
+
+	var rarity := str(horse.get("rarity", "Common"))
+	var card_style: StyleBoxFlat = get_style_for_rarity(rarity)
+	card_style.bg_color = get_color_for_horse(str(horse.get("color", "brown")))
+	if index == selected_horse_index:
+		card_style.border_color = Color(1.0, 1.0, 1.0)
+		card_style.set_border_width_all(max(card_style.border_width_left + 1, 4))
+
+	var hover_style: StyleBoxFlat = card_style.duplicate() as StyleBoxFlat
+	hover_style.bg_color = hover_style.bg_color.lightened(0.08)
+	var pressed_style: StyleBoxFlat = card_style.duplicate() as StyleBoxFlat
+	pressed_style.bg_color = pressed_style.bg_color.darkened(0.08)
+
+	card.add_theme_stylebox_override("normal", card_style)
+	card.add_theme_stylebox_override("hover", hover_style)
+	card.add_theme_stylebox_override("pressed", pressed_style)
+	card.add_theme_stylebox_override("focus", card_style)
+	card.add_theme_color_override("font_color", get_card_text_color(str(horse.get("color", "brown")), rarity))
+	card.add_theme_color_override("font_hover_color", get_card_text_color(str(horse.get("color", "brown")), rarity))
+	card.add_theme_color_override("font_pressed_color", get_card_text_color(str(horse.get("color", "brown")), rarity))
+	card.add_theme_font_size_override("font_size", 14)
+	card.pressed.connect(Callable(self, "_on_ranch_horse_pressed").bind(index))
+	return card
+
+func get_color_for_horse(horse_color: String) -> Color:
+	match horse_color:
+		"brown":
+			return Color(0.46, 0.26, 0.12)
+		"white":
+			return Color(0.94, 0.92, 0.86)
+		"black":
+			return Color(0.07, 0.07, 0.08)
+		"gray":
+			return Color(0.47, 0.49, 0.50)
+		"cream":
+			return Color(0.87, 0.76, 0.54)
+		"silver":
+			return Color(0.72, 0.76, 0.78)
+		"gold":
+			return Color(0.94, 0.67, 0.12)
+		"blue":
+			return Color(0.20, 0.45, 0.82)
+		"pink":
+			return Color(0.90, 0.42, 0.65)
+		"aurora":
+			return Color(0.38, 0.76, 0.72)
+		_:
+			return Color(0.46, 0.26, 0.12)
+
+func get_style_for_rarity(rarity: String) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.set_border_width_all(2)
+	style.corner_radius_top_left = 8
+	style.corner_radius_top_right = 8
+	style.corner_radius_bottom_left = 8
+	style.corner_radius_bottom_right = 8
+
+	match rarity:
+		"Uncommon":
+			style.border_color = Color(0.36, 0.84, 0.42)
+		"Rare":
+			style.border_color = Color(0.22, 0.55, 1.0)
+			style.set_border_width_all(3)
+		"Epic":
+			style.border_color = Color(0.70, 0.32, 0.95)
+			style.set_border_width_all(3)
+		"Legendary":
+			style.border_color = Color(1.0, 0.78, 0.18)
+			style.set_border_width_all(4)
+		_:
+			style.border_color = Color(0.85, 0.85, 0.78)
+	return style
+
+func get_card_text_color(horse_color: String, rarity: String) -> Color:
+	if rarity == "Legendary":
+		return Color(1.0, 0.93, 0.58)
+	if horse_color == "black" or horse_color == "blue" or horse_color == "brown":
+		return Color(1.0, 1.0, 1.0)
+	return Color(0.09, 0.10, 0.08)
+
+func _on_ranch_horse_pressed(index: int) -> void:
+	if index < 0 or index >= horses.size():
+		return
+	selected_horse_index = index
+	horse_list.select(selected_horse_index)
+	refresh_detail()
+	update_ranch_view()
+	show_message("Selected %s." % str(get_selected_horse().get("name", "horse")))
 
 func refresh_parent_options() -> void:
 	is_refreshing_parent_options = true

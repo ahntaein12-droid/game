@@ -84,6 +84,30 @@ text = "No horse selected."
 vertical_alignment = 0
 theme_override_font_sizes/font_size = 17
 
+[node name="RanchPanel" type="PanelContainer" parent="RootMargin/Root"]
+custom_minimum_size = Vector2(0, 185)
+layout_mode = 2
+
+[node name="RanchBox" type="VBoxContainer" parent="RootMargin/Root/RanchPanel"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="RanchTitle" type="Label" parent="RootMargin/Root/RanchPanel/RanchBox"]
+layout_mode = 2
+text = "Ranch"
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 22
+
+[node name="RanchScroll" type="ScrollContainer" parent="RootMargin/Root/RanchPanel/RanchBox"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="RanchGrid" type="GridContainer" parent="RootMargin/Root/RanchPanel/RanchBox/RanchScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+columns = 4
+
 [node name="BreedingPanel" type="PanelContainer" parent="RootMargin/Root"]
 layout_mode = 2
 

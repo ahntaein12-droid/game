@@ -35,7 +35,7 @@ func _inherit_trait(a: String, b: String, options: Array[String], mutation_chanc
 	return a if rng.randf() < 0.5 else b
 
 func _roll_rarity(rarity_a: String, rarity_b: String) -> String:
-	var base_rank := max(HorseScript.RARITIES.find(rarity_a), HorseScript.RARITIES.find(rarity_b))
+	var base_rank: int = max(HorseScript.RARITIES.find(rarity_a), HorseScript.RARITIES.find(rarity_b))
 	base_rank = max(base_rank, 0)
 	var roll := rng.randf()
 

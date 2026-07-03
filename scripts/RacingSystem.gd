@@ -9,12 +9,12 @@ func _init() -> void:
 # Calculates one automatic race and applies exp/condition changes to the horse.
 func run_race(horse) -> Dictionary:
 	var condition_bonus := int(horse.condition / 10.0)
-	var score := horse.speed * 2 + horse.stamina + horse.luck + rng.randi_range(0, 20) + condition_bonus
+	var score: int = horse.speed * 2 + horse.stamina + horse.luck + rng.randi_range(0, 20) + condition_bonus
 	var place := _score_to_place(score)
 	var reward := _reward_for_place(place)
 
 	horse.condition = max(0, horse.condition - 15)
-	var leveled_up := horse.add_exp(int(reward["exp"]), rng)
+	var leveled_up: bool = horse.add_exp(int(reward["exp"]), rng)
 
 	return {
 		"score": score,
