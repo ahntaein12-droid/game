@@ -16,12 +16,17 @@ const PATTERNS := ["no pattern", "stripe", "spots", "star", "socks"]
 @onready var breed_button: Button = $RootMargin/Root/ButtonRow/BreedButton
 @onready var save_button: Button = $RootMargin/Root/ButtonRow/SaveButton
 @onready var load_button: Button = $RootMargin/Root/ButtonRow/LoadButton
+@onready var parent_a_option: OptionButton = $RootMargin/Root/BreedingPanel/BreedingBox/ParentAOption
+@onready var parent_b_option: OptionButton = $RootMargin/Root/BreedingPanel/BreedingBox/ParentBOption
 
 var coins := 500
 var feed := 5
 var horses: Array = []
 var next_horse_id := 1
 var selected_horse_index := 0
+var selected_parent_a_id := -1
+var selected_parent_b_id := -1
+var is_refreshing_parent_options := false
 var rng := RandomNumberGenerator.new()
 
 func _ready() -> void:
@@ -43,6 +48,8 @@ func connect_signals() -> void:
 	prepare_button(save_button)
 	prepare_button(load_button)
 	horse_list.item_selected.connect(Callable(self, "_on_horse_selected"))
+	parent_a_option.item_selected.connect(Callable(self, "_on_parent_a_selected"))
+	parent_b_option.item_selected.connect(Callable(self, "_on_parent_b_selected"))
 	feed_button.pressed.connect(Callable(self, "_on_feed_pressed"))
 	buy_feed_button.pressed.connect(Callable(self, "_on_buy_feed_pressed"))
 	race_button.pressed.connect(Callable(self, "_on_race_pressed"))
@@ -83,6 +90,8 @@ func setup_default_data() -> void:
 	add_horse(make_horse("Snow", "Common", "white", "no pattern", 4, 8, 4))
 	add_horse(make_horse("Shadow", "Uncommon", "black", "stripe", 8, 6, 5))
 	selected_horse_index = 0
+	selected_parent_a_id = int(horses[0]["id"])
+	selected_parent_b_id = int(horses[1]["id"])
 
 func make_horse(name: String, rarity: String, color: String, pattern: String, speed: int, stamina: int, luck: int) -> Dictionary:
 	var horse := {
@@ -111,6 +120,22 @@ func _on_horse_selected(index: int) -> void:
 	selected_horse_index = index
 	refresh_detail()
 	show_message("Selected %s." % str(get_selected_horse().get("name", "horse")))
+
+func _on_parent_a_selected(index: int) -> void:
+	if is_refreshing_parent_options:
+		return
+	selected_parent_a_id = get_parent_option_horse_id(parent_a_option, index)
+	if selected_parent_a_id == selected_parent_b_id:
+		selected_parent_b_id = find_different_horse_id(selected_parent_a_id)
+	refresh_parent_options()
+
+func _on_parent_b_selected(index: int) -> void:
+	if is_refreshing_parent_options:
+		return
+	selected_parent_b_id = get_parent_option_horse_id(parent_b_option, index)
+	if selected_parent_b_id == selected_parent_a_id:
+		selected_parent_a_id = find_different_horse_id(selected_parent_b_id)
+	refresh_parent_options()
 
 func _on_feed_pressed() -> void:
 	print("Feed button pressed")
@@ -203,13 +228,22 @@ func _on_breed_pressed() -> void:
 		print("Breed failed: not enough coins")
 		return
 
+	var parent_a := get_horse_by_id(selected_parent_a_id)
+	var parent_b := get_horse_by_id(selected_parent_b_id)
+	if parent_a.is_empty() or parent_b.is_empty():
+		show_message("Select two horses to breed.")
+		print("Breed failed: missing parent selection")
+		return
+	if int(parent_a["id"]) == int(parent_b["id"]):
+		show_message("Please select two different horses.")
+		print("Breed failed: same parent selected")
+		return
+
 	coins -= BREED_COST
-	var parent_a: Dictionary = horses[0]
-	var parent_b: Dictionary = horses[1]
 	var foal := make_foal(parent_a, parent_b)
 	add_horse(foal)
 	selected_horse_index = horses.size() - 1
-	show_message("A new foal was born: %s." % str(foal["name"]))
+	show_message(get_foal_message(foal))
 	print("A new foal was born: %s. Coins: %d." % [str(foal["name"]), coins])
 	update_ui()
 
@@ -226,6 +260,26 @@ func get_selected_horse() -> Dictionary:
 	if selected_horse_index < 0 or selected_horse_index >= horses.size():
 		return {}
 	return horses[selected_horse_index]
+
+func get_horse_by_id(horse_id: int) -> Dictionary:
+	for horse in horses:
+		if horse is Dictionary and int(horse.get("id", -1)) == horse_id:
+			return horse as Dictionary
+	return {}
+
+func get_parent_option_horse_id(option: OptionButton, index: int) -> int:
+	if index < 0 or index >= option.get_item_count():
+		return -1
+	return int(option.get_item_metadata(index))
+
+func find_different_horse_id(horse_id: int) -> int:
+	for horse in horses:
+		if not (horse is Dictionary):
+			continue
+		var candidate_id := int(horse.get("id", -1))
+		if candidate_id != horse_id:
+			return candidate_id
+	return -1
 
 func make_foal(parent_a: Dictionary, parent_b: Dictionary) -> Dictionary:
 	var foal_id := next_horse_id
@@ -264,6 +318,17 @@ func random_rarity() -> String:
 	if roll < 0.45:
 		return "Uncommon"
 	return "Common"
+
+func get_foal_message(foal: Dictionary) -> String:
+	return "A new foal was born: %s | Color: %s | Pattern: %s | Rarity: %s | Speed: %d | Stamina: %d | Luck: %d" % [
+		str(foal["name"]),
+		str(foal["color"]),
+		str(foal["pattern"]),
+		str(foal["rarity"]),
+		int(foal["speed"]),
+		int(foal["stamina"]),
+		int(foal["luck"])
+	]
 
 func get_race_place(score: int) -> int:
 	if score >= 40:
@@ -340,6 +405,7 @@ func load_game_data() -> void:
 	if horses.is_empty():
 		setup_default_data()
 	selected_horse_index = 0
+	reset_parent_selection()
 	show_message("Game loaded.")
 	print("Game loaded from %s." % SAVE_PATH)
 
@@ -349,6 +415,7 @@ func refresh_all() -> void:
 func update_ui() -> void:
 	refresh_stats()
 	refresh_horse_list()
+	refresh_parent_options()
 	refresh_detail()
 
 func refresh_stats() -> void:
@@ -369,6 +436,56 @@ func refresh_horse_list() -> void:
 
 	selected_horse_index = clampi(selected_horse_index, 0, horses.size() - 1)
 	horse_list.select(selected_horse_index)
+
+func refresh_parent_options() -> void:
+	is_refreshing_parent_options = true
+	ensure_parent_selection()
+	fill_parent_option(parent_a_option, selected_parent_a_id)
+	fill_parent_option(parent_b_option, selected_parent_b_id)
+	is_refreshing_parent_options = false
+
+func ensure_parent_selection() -> void:
+	if horses.is_empty():
+		selected_parent_a_id = -1
+		selected_parent_b_id = -1
+		return
+
+	if get_horse_by_id(selected_parent_a_id).is_empty():
+		selected_parent_a_id = int(horses[0].get("id", -1))
+	if horses.size() == 1:
+		selected_parent_b_id = -1
+		return
+	if get_horse_by_id(selected_parent_b_id).is_empty() or selected_parent_b_id == selected_parent_a_id:
+		selected_parent_b_id = find_different_horse_id(selected_parent_a_id)
+
+func reset_parent_selection() -> void:
+	if horses.is_empty():
+		selected_parent_a_id = -1
+		selected_parent_b_id = -1
+		return
+	selected_parent_a_id = int(horses[0].get("id", -1))
+	selected_parent_b_id = find_different_horse_id(selected_parent_a_id)
+
+func fill_parent_option(option: OptionButton, selected_id: int) -> void:
+	option.clear()
+	for horse in horses:
+		option.add_item("%s Lv.%d [%s]" % [
+			str(horse.get("name", "Horse")),
+			int(horse.get("level", 1)),
+			str(horse.get("rarity", "Common"))
+		])
+		option.set_item_metadata(option.get_item_count() - 1, int(horse.get("id", -1)))
+
+	if option.get_item_count() == 0:
+		option.disabled = true
+		return
+
+	option.disabled = false
+	for index in range(option.get_item_count()):
+		if get_parent_option_horse_id(option, index) == selected_id:
+			option.select(index)
+			return
+	option.select(0)
 
 func refresh_detail() -> void:
 	var horse := get_selected_horse()
